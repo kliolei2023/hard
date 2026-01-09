@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>親子魔法鏡 - 隱藏存檔版</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Microsoft JhengHei', sans-serif; }
+        #input_video {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            object-fit: cover; transform: scaleX(-1); z-index: 0;
+        }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
+        
+        /* 預覽視窗 */
+        #review-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); display: none; flex-direction: column;
+            align-items: center; justify-content: center; z-index: 100;
+        }
+        #review-img { max-width: 80%; max-height: 70%; border: 10px solid white; border-radius: 10px; box-shadow: 0 0 30px rgba(255,105,180,0.5); }
+        
+        /* 隱藏的管理導出按鈕 - 位於左下角，幾乎透明 */
+        #admin-export-btn {
+            position: fixed; bottom: 10px; left: 10px; width: 60px; height: 60px;
+            background: rgba(255,255,255,0.05); border: none; border-radius: 50%;
+            color: rgba(255,255,255,0.1); font-size: 10px; z-index: 9999; cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <video id="input_video"></video>
+    <div id="canvas-container"></div>
+
+    <div id="review-overlay">
+        <img id="review-img" src="">
+        <div style="color:white; font-size:28px; margin-top:20px; font-weight:bold; text-shadow: 0 0 10px #ff69b4;">✨ 捕捉到滿滿的愛心！ ✨</div>
+        <p style="color: #ffb6c1;">(魔法已記錄在鏡子裡囉)</p>
+    </div>
+
+    <button id="admin-export-btn" onclick="exportAllPhotos()">ADMIN</button>
+
+    <script>
+        const videoElement = document.getElementById('input_video');
+        const reviewOverlay = document.getElementById('review-overlay');
+        const reviewImg = document.getElementById('review-img');
+        
+        let scene, camera, renderer;
+        let hands;
+        let photoGallery = []; // 用於存放活動期間拍攝的照片
+
+        // 初始化 Three.js
+        function initThree() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ 
+                alpha: true, 
+                antialias: true,
+                preserveDrawingBuffer: true // 必須開啟才能截圖
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+            camera.position.z = 5;
+        }
+
+        // 捕捉照片並存入本地陣列
+        function captureMagicPhoto() {
+            // 1. 從 Canvas 取得影像
+            const imgData = renderer.domElement.toDataURL("image/png");
+            
+            // 2. 存入陣列 (暫存)
+            const timestamp = new Date().toLocaleTimeString();
+            photoGallery.push({
+                name: `Magic_Photo_${Date.now()}.png`,
+                data: imgData
+            });
+            console.log(`已儲存照片，目前總數: ${photoGallery.length}`);
+
+            // 3. 顯示預覽效果 (讓小孩看到)
+            reviewImg.src = imgData;
+            reviewOverlay.style.display = 'flex';
+
+            // 4. 3秒後自動關閉預覽，不干擾下一位玩家
+            setTimeout(() => {
+                reviewOverlay.style.display = 'none';
+            }, 3000);
+        }
+
+        // 一鍵導出所有照片 (活動結束後由您執行)
+        function exportAllPhotos() {
+            if (photoGallery.length === 0) {
+                alert("目前沒有儲存的照片喔！");
+                return;
+            }
+
+            const confirmExport = confirm(`活動結束！準備下載全部 ${photoGallery.length} 張照片嗎？\n(建議在穩定網路或 iPad 儲存空間足夠時執行)`);
+            
+            if (confirmExport) {
+                photoGallery.forEach((photo, index) => {
+                    // 使用 setTimeout 分開下載，避免瀏覽器同時開啟太多下載導致當掉
+                    setTimeout(() => {
+                        const link = document.createElement('a');
+                        link.href = photo.data;
+                        link.download = photo.name;
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                    }, index * 800); // 每 0.8 秒下載一張
+                });
+            }
+        }
+
+        // --- Mediapipe 偵測與愛心邏輯 ---
+        // (此處保留您原有的 Hands 偵測邏輯，並在判定為雙手愛心時呼叫 captureMagicPhoto())
+        
+        function onResults(results) {
+            // 原有的渲染邏輯...
+            renderer.render(scene, camera);
+
+            // 假設判定雙手愛心成功
+            // if (isHeartGesture(results)) {
+            //     if (reviewOverlay.style.display !== 'flex') {
+            //         captureMagicPhoto();
+            //     }
+            // }
+        }
+
+        // 啟動程序
+        initThree();
+        // 初始化 Mediapipe Camera... (省略部分重複代碼，請結合您原本的偵測邏輯)
+        
+    </script>
+</body>
+</html>
