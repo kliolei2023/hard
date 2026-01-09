@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>親子魔法鏡 - 隱藏存檔版</title>
+    <title>親子魔法鏡 - 穩定存檔版</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -14,127 +14,135 @@
         #input_video {
             position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
             object-fit: cover; transform: scaleX(-1); z-index: 0;
+            background: #222; /* 增加底色防止黑屏感 */
         }
         #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
-        
-        /* 預覽視窗 */
-        #review-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.8); display: none; flex-direction: column;
-            align-items: center; justify-content: center; z-index: 100;
+        #status-bar {
+            position: absolute; bottom: 40px; width: 100%; text-align: center;
+            color: white; font-size: 24px; font-weight: bold; z-index: 100;
         }
-        #review-img { max-width: 80%; max-height: 70%; border: 10px solid white; border-radius: 10px; box-shadow: 0 0 30px rgba(255,105,180,0.5); }
-        
-        /* 隱藏的管理導出按鈕 - 位於左下角，幾乎透明 */
-        #admin-export-btn {
-            position: fixed; bottom: 10px; left: 10px; width: 60px; height: 60px;
-            background: rgba(255,255,255,0.05); border: none; border-radius: 50%;
-            color: rgba(255,255,255,0.1); font-size: 10px; z-index: 9999; cursor: pointer;
+        #review-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.6); backdrop-filter: blur(12px);
+            z-index: 1000; display: none; flex-direction: column; align-items: center; justify-content: center;
+        }
+        #review-img { max-width: 80%; max-height: 70%; border: 8px solid white; border-radius: 15px; }
+        #overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(circle, #fff5e6 0%, #ffdee9 100%); z-index: 2000;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+        #start-btn {
+            padding: 20px 60px; font-size: 26px; background: #ff6b6b; color: white; 
+            border: none; border-radius: 50px; cursor: pointer; font-weight: bold;
+        }
+        /* 隱藏導出按鈕 */
+        #export-trigger {
+            position: fixed; bottom: 5px; left: 5px; width: 40px; height: 40px;
+            opacity: 0.05; z-index: 9999; border: none; background: transparent;
         }
     </style>
 </head>
 <body>
 
-    <video id="input_video"></video>
+    <video id="input_video" playsinline muted autoplay></video>
     <div id="canvas-container"></div>
+    <div id="status-bar">準備啟動魔法...❤️</div>
 
     <div id="review-overlay">
         <img id="review-img" src="">
-        <div style="color:white; font-size:28px; margin-top:20px; font-weight:bold; text-shadow: 0 0 10px #ff69b4;">✨ 捕捉到滿滿的愛心！ ✨</div>
-        <p style="color: #ffb6c1;">(魔法已記錄在鏡子裡囉)</p>
+        <div style="color:white; font-size:28px; margin-top:20px; font-weight:bold;">✨ 捕捉到愛心魔法了！ ✨</div>
     </div>
 
-    <button id="admin-export-btn" onclick="exportAllPhotos()">ADMIN</button>
+    <div id="overlay">
+        <h1 style="color: #ff4757; font-size: 40px;">愛心魔法相機</h1>
+        <button id="start-btn" onclick="initApp()">啟動魔法鏡</button>
+    </div>
+
+    <button id="export-trigger" onclick="exportPhotos()"></button>
 
     <script>
-        const videoElement = document.getElementById('input_video');
-        const reviewOverlay = document.getElementById('review-overlay');
-        const reviewImg = document.getElementById('review-img');
-        
         let scene, camera, renderer;
+        let photoGallery = []; // 暫存照片
         let hands;
-        let photoGallery = []; // 用於存放活動期間拍攝的照片
 
-        // 初始化 Three.js
+        async function initApp() {
+            const btn = document.getElementById('start-btn');
+            btn.innerText = "授權鏡頭中...";
+            
+            try {
+                // 強制請求鏡頭權限，修復黑屏
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+                document.getElementById('input_video').srcObject = stream;
+                
+                initThree();
+                await setupHands();
+                
+                document.getElementById('overlay').style.display = 'none';
+                document.getElementById('status-bar').innerText = "比出 ❤️ 觸發魔法！";
+            } catch (err) {
+                alert("無法開啟鏡鏡頭，請檢查權限設定！");
+                btn.innerText = "重試";
+            }
+        }
+
         function initThree() {
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            renderer = new THREE.WebGLRenderer({ 
-                alpha: true, 
-                antialias: true,
-                preserveDrawingBuffer: true // 必須開啟才能截圖
-            });
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 1, 1000);
+            camera.position.z = 100;
+
+            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.getElementById('canvas-container').appendChild(renderer.domElement);
-            camera.position.z = 5;
         }
 
-        // 捕捉照片並存入本地陣列
-        function captureMagicPhoto() {
-            // 1. 從 Canvas 取得影像
-            const imgData = renderer.domElement.toDataURL("image/png");
-            
-            // 2. 存入陣列 (暫存)
-            const timestamp = new Date().toLocaleTimeString();
-            photoGallery.push({
-                name: `Magic_Photo_${Date.now()}.png`,
-                data: imgData
+        async function setupHands() {
+            hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
             });
-            console.log(`已儲存照片，目前總數: ${photoGallery.length}`);
+            hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+            hands.onResults(onResults);
 
-            // 3. 顯示預覽效果 (讓小孩看到)
-            reviewImg.src = imgData;
-            reviewOverlay.style.display = 'flex';
-
-            // 4. 3秒後自動關閉預覽，不干擾下一位玩家
-            setTimeout(() => {
-                reviewOverlay.style.display = 'none';
-            }, 3000);
+            const cameraHelper = new Camera(document.getElementById('input_video'), {
+                onFrame: async () => { await hands.send({image: document.getElementById('input_video')}); },
+                width: 1280, height: 720
+            });
+            cameraHelper.start();
         }
 
-        // 一鍵導出所有照片 (活動結束後由您執行)
-        function exportAllPhotos() {
-            if (photoGallery.length === 0) {
-                alert("目前沒有儲存的照片喔！");
-                return;
-            }
-
-            const confirmExport = confirm(`活動結束！準備下載全部 ${photoGallery.length} 張照片嗎？\n(建議在穩定網路或 iPad 儲存空間足夠時執行)`);
+        function onResults(results) {
+            // 渲染邏輯...
+            renderer.render(scene, camera);
             
-            if (confirmExport) {
-                photoGallery.forEach((photo, index) => {
-                    // 使用 setTimeout 分開下載，避免瀏覽器同時開啟太多下載導致當掉
+            // 這裡插入您的愛心偵測邏輯，成功後呼叫 captureLocal()
+            // if (detectedHeart) { captureLocal(); }
+        }
+
+        // 修改後的拍照：只存本地，不彈下載
+        function captureLocal() {
+            const imgData = renderer.domElement.toDataURL("image/png");
+            photoGallery.push({ id: Date.now(), data: imgData });
+
+            // 僅顯示預覽 3 秒
+            document.getElementById('review-img').src = imgData;
+            document.getElementById('review-overlay').style.display = 'flex';
+            setTimeout(() => { document.getElementById('review-overlay').style.display = 'none'; }, 3000);
+        }
+
+        // 管理員導出功能
+        function exportPhotos() {
+            if (photoGallery.length === 0) return alert("還沒拍到照片喔！");
+            if (confirm(`活動結束，下載全部 ${photoGallery.length} 張照片？`)) {
+                photoGallery.forEach((p, i) => {
                     setTimeout(() => {
-                        const link = document.createElement('a');
-                        link.href = photo.data;
-                        link.download = photo.name;
-                        document.body.appendChild(link);
-                        link.click();
-                        document.body.removeChild(link);
-                    }, index * 800); // 每 0.8 秒下載一張
+                        const a = document.createElement('a');
+                        a.href = p.data;
+                        a.download = `Magic_${i+1}.png`;
+                        a.click();
+                    }, i * 600);
                 });
             }
         }
-
-        // --- Mediapipe 偵測與愛心邏輯 ---
-        // (此處保留您原有的 Hands 偵測邏輯，並在判定為雙手愛心時呼叫 captureMagicPhoto())
-        
-        function onResults(results) {
-            // 原有的渲染邏輯...
-            renderer.render(scene, camera);
-
-            // 假設判定雙手愛心成功
-            // if (isHeartGesture(results)) {
-            //     if (reviewOverlay.style.display !== 'flex') {
-            //         captureMagicPhoto();
-            //     }
-            // }
-        }
-
-        // 啟動程序
-        initThree();
-        // 初始化 Mediapipe Camera... (省略部分重複代碼，請結合您原本的偵測邏輯)
-        
     </script>
 </body>
 </html>
