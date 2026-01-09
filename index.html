@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+\<!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>親子魔法鏡 - 穩定存檔版</title>
+    <title>親子魔法鏡 - 隱藏自動存檔版</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -14,19 +14,22 @@
         #input_video {
             position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
             object-fit: cover; transform: scaleX(-1); z-index: 0;
-            background: #222; /* 增加底色防止黑屏感 */
         }
         #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
         #status-bar {
             position: absolute; bottom: 40px; width: 100%; text-align: center;
             color: white; font-size: 24px; font-weight: bold; z-index: 100;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.8);
         }
         #review-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.6); backdrop-filter: blur(12px);
             z-index: 1000; display: none; flex-direction: column; align-items: center; justify-content: center;
         }
-        #review-img { max-width: 80%; max-height: 70%; border: 8px solid white; border-radius: 15px; }
+        #review-img {
+            max-width: 80%; max-height: 70%; border: 8px solid white;
+            box-shadow: 0 0 30px rgba(255,107,107,0.5); border-radius: 15px;
+        }
         #overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: radial-gradient(circle, #fff5e6 0%, #ffdee9 100%); z-index: 2000;
@@ -35,11 +38,11 @@
         #start-btn {
             padding: 20px 60px; font-size: 26px; background: #ff6b6b; color: white; 
             border: none; border-radius: 50px; cursor: pointer; font-weight: bold;
+            box-shadow: 0 8px 15px rgba(255,107,107,0.4);
         }
-        /* 隱藏導出按鈕 */
-        #export-trigger {
-            position: fixed; bottom: 5px; left: 5px; width: 40px; height: 40px;
-            opacity: 0.05; z-index: 9999; border: none; background: transparent;
+        #admin-export-btn {
+            position: fixed; bottom: 10px; left: 10px; width: 50px; height: 50px;
+            background: transparent; border: none; opacity: 0.05; z-index: 9999; color: white;
         }
     </style>
 </head>
@@ -51,56 +54,89 @@
 
     <div id="review-overlay">
         <img id="review-img" src="">
-        <div style="color:white; font-size:28px; margin-top:20px; font-weight:bold;">✨ 捕捉到愛心魔法了！ ✨</div>
+        <div style="color:white; font-size:28px; margin-top:20px; font-weight:bold;">✨ 捕捉到滿滿的愛心！ ✨</div>
     </div>
 
     <div id="overlay">
-        <h1 style="color: #ff4757; font-size: 40px;">愛心魔法相機</h1>
+        <h1 style="color: #ff4757; font-size: 48px; margin-bottom: 10px;">愛心魔法相機</h1>
+        <p style="color: #747d8c; font-size: 20px; margin-bottom: 30px;">與家人一起比出「大愛心」觸發魔法！</p>
         <button id="start-btn" onclick="initApp()">啟動魔法鏡</button>
     </div>
 
-    <button id="export-trigger" onclick="exportPhotos()"></button>
+    <button id="admin-export-btn" onclick="exportAllPhotos()">ADMIN</button>
 
     <script>
-        let scene, camera, renderer;
-        let photoGallery = []; // 暫存照片
-        let hands;
+        let scene, camera, renderer, particleSystem;
+        let polaroidGroup = new THREE.Group();
+        let targetPositions = [], originalPositions = [], particleColors = [];
+        let photoGallery = []; // 用於背景存放照片
+        let config = { maxParticles: 10000, isReviewing: false, lerpSpeed: 0.15 };
+        let handsActive = 0, midpoint = new THREE.Vector3();
 
         async function initApp() {
-            const btn = document.getElementById('start-btn');
-            btn.innerText = "授權鏡頭中...";
-            
-            try {
-                // 強制請求鏡頭權限，修復黑屏
-                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
-                document.getElementById('input_video').srcObject = stream;
-                
-                initThree();
-                await setupHands();
-                
-                document.getElementById('overlay').style.display = 'none';
-                document.getElementById('status-bar').innerText = "比出 ❤️ 觸發魔法！";
-            } catch (err) {
-                alert("無法開啟鏡鏡頭，請檢查權限設定！");
-                btn.innerText = "重試";
-            }
+            document.getElementById('start-btn').innerText = "啟動中...";
+            initThree();
+            await initMediaPipe();
+            document.getElementById('overlay').style.display = 'none';
+            document.getElementById('status-bar').innerText = "比出 ❤️ 觸發魔法！";
         }
 
         function initThree() {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 1, 1000);
-            camera.position.z = 100;
+            camera.position.z = 120;
 
             renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            scene.add(polaroidGroup);
+
+            // 初始化粒子效果
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(config.maxParticles * 3);
+            const colors = new Float32Array(config.maxParticles * 3);
+            const colorPalette = [0xff4d4d, 0xff7675, 0xff9f43, 0xfeca57, 0xffffff];
+
+            for(let i=0; i<config.maxParticles; i++) {
+                const x = (Math.random()-0.5)*250;
+                const y = (Math.random()-0.5)*180;
+                const z = (Math.random()-0.5)*100;
+                originalPositions.push({x, y, z});
+                targetPositions.push({x:0, y:0, z:0});
+                
+                positions[i*3] = x;
+                positions[i*3+1] = y;
+                positions[i*3+2] = z;
+
+                const col = new THREE.Color(colorPalette[Math.floor(Math.random()*colorPalette.length)]);
+                particleColors.push(col);
+                colors[i*3] = col.r;
+                colors[i*3+1] = col.g;
+                colors[i*3+2] = col.b;
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            const material = new THREE.PointsMaterial({ size: 1.5, vertexColors: true, transparent: true, opacity: 0.8 });
+            particleSystem = new THREE.Points(geometry, material);
+            scene.add(particleSystem);
+
+            animate();
         }
 
-        async function setupHands() {
-            hands = new Hands({
+        async function initMediaPipe() {
+            const hands = new Hands({
                 locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
             });
-            hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+
+            hands.setOptions({
+                maxNumHands: 2,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.6,
+                minTrackingConfidence: 0.6
+            });
+
             hands.onResults(onResults);
 
             const cameraHelper = new Camera(document.getElementById('input_video'), {
@@ -111,37 +147,79 @@
         }
 
         function onResults(results) {
-            // 渲染邏輯...
-            renderer.render(scene, camera);
-            
-            // 這裡插入您的愛心偵測邏輯，成功後呼叫 captureLocal()
-            // if (detectedHeart) { captureLocal(); }
+            handsActive = 0;
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length === 2) {
+                // 愛心偵測邏輯（比照原始檔案）
+                const h1 = results.multiHandLandmarks[0];
+                const h2 = results.multiHandLandmarks[1];
+                
+                // 簡化判斷：雙手靠近則判定為愛心聚合
+                const d = Math.hypot(h1[4].x - h2[4].x, h1[4].y - h2[4].y);
+                if (d < 0.2) {
+                    handsActive = 2;
+                    midpoint.set((h1[4].x + h2[4].x - 1)*-100, (h1[4].y + h2[4].y - 1)*-60, 0);
+                    
+                    if (!config.isReviewing) {
+                        triggerCapture();
+                    }
+                }
+            }
         }
 
-        // 修改後的拍照：只存本地，不彈下載
-        function captureLocal() {
+        function triggerCapture() {
+            config.isReviewing = true;
+            // 1. 背景存檔
             const imgData = renderer.domElement.toDataURL("image/png");
-            photoGallery.push({ id: Date.now(), data: imgData });
+            photoGallery.push({ name: `Magic_${Date.now()}.png`, data: imgData });
 
-            // 僅顯示預覽 3 秒
+            // 2. 顯示預覽
             document.getElementById('review-img').src = imgData;
             document.getElementById('review-overlay').style.display = 'flex';
-            setTimeout(() => { document.getElementById('review-overlay').style.display = 'none'; }, 3000);
+
+            // 3. 3秒後恢復
+            setTimeout(() => {
+                document.getElementById('review-overlay').style.display = 'none';
+                config.isReviewing = false;
+            }, 3000);
         }
 
-        // 管理員導出功能
-        function exportPhotos() {
-            if (photoGallery.length === 0) return alert("還沒拍到照片喔！");
-            if (confirm(`活動結束，下載全部 ${photoGallery.length} 張照片？`)) {
-                photoGallery.forEach((p, i) => {
+        function exportAllPhotos() {
+            if (photoGallery.length === 0) return alert("還沒有照片喔！");
+            if (confirm(`活動完結！下載全部 ${photoGallery.length} 張照片？`)) {
+                photoGallery.forEach((photo, i) => {
                     setTimeout(() => {
-                        const a = document.createElement('a');
-                        a.href = p.data;
-                        a.download = `Magic_${i+1}.png`;
-                        a.click();
+                        const link = document.createElement('a');
+                        link.href = photo.data;
+                        link.download = photo.name;
+                        link.click();
                     }, i * 600);
                 });
             }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = Date.now() * 0.002;
+            const pos = particleSystem.geometry.attributes.position;
+
+            for(let i=0; i<config.maxParticles; i++) {
+                let tx, ty, tz;
+                if (handsActive === 2) {
+                    tx = midpoint.x + (Math.random()-0.5)*50;
+                    ty = midpoint.y + (Math.random()-0.5)*50;
+                    tz = 0;
+                } else {
+                    tx = originalPositions[i].x + Math.sin(time + i*0.2)*5;
+                    ty = originalPositions[i].y + Math.cos(time + i*0.2)*5;
+                    tz = originalPositions[i].z;
+                }
+
+                pos.array[i*3] += (tx - pos.array[i*3]) * config.lerpSpeed;
+                pos.array[i*3+1] += (ty - pos.array[i*3+1]) * config.lerpSpeed;
+                pos.array[i*3+2] += (tz - pos.array[i*3+2]) * config.lerpSpeed;
+            }
+            pos.needsUpdate = true;
+            renderer.render(scene, camera);
         }
     </script>
 </body>
